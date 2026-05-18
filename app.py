@@ -5,7 +5,7 @@ import requests
 
 app = Flask(__name__)
 
-# ========== ТОКЕНЫ ТРЁХ БОТОВ (можно через переменные окружения) ==========
+# Токены трёх ботов (замените при необходимости)
 TOKEN1 = os.environ.get('BOT_TOKEN_1', '8684012503:AAHcBc1ggVUGEHv7dY1M-YcGIuxviWwTLh0')
 TOKEN2 = os.environ.get('BOT_TOKEN_2', '8223022364:AAEu31BylYStpxHxg06yyW_JY2NX32WgEPo')
 TOKEN3 = os.environ.get('BOT_TOKEN_3', '8764025967:AAFS_kgxV6y9Zcg3THrrG-JNb6nErL3KrA4')
@@ -19,9 +19,11 @@ def send_message(chat_id, text, token, reply_markup=None):
     if reply_markup:
         payload['reply_markup'] = json.dumps(reply_markup)
     try:
-        requests.post(url, json=payload, timeout=5)
+        r = requests.post(url, json=payload, timeout=5)
+        if not r.ok:
+            print(f"Ошибка отправки {chat_id}: {r.status_code} {r.text}")
     except Exception as e:
-        print(e)
+        print(f"Ошибка: {e}")
 
 def process_update(update, token, bot_num):
     # 1. Игнорируем сообщения от ботов (чтобы не зацикливаться)
@@ -34,18 +36,32 @@ def process_update(update, token, bot_num):
 
     print(f"Bot {bot_num} получил: {json.dumps(update)[:200]}")
 
+    # Обработка обычных сообщений
     if 'message' in update:
         msg = update['message']
         chat_id = msg['chat']['id']
-
-        # 2. Игнорируем сообщения от самого оператора (чтобы не было эха)
-        if chat_id == OPERATOR_ID:
-            print(f"Bot {bot_num}: игнорирую сообщение от оператора")
-            return
-
         user = msg['chat'].get('username', '')
         text = msg.get('text')
 
+        # 2. Если сообщение от оператора – это ответ клиенту (формат: ID текст)
+        if chat_id == OPERATOR_ID:
+            if text and not text.startswith('/'):  # не команда
+                parts = text.split(maxsplit=1)
+                if len(parts) >= 2:
+                    try:
+                        target_id = int(parts[0])
+                        reply_text = parts[1]
+                        # Отправляем ответ клиенту через того же бота (используем текущий token)
+                        send_message(target_id, f"👨‍💼 Оператор: {reply_text}", token)
+                        # Подтверждение оператору
+                        send_message(OPERATOR_ID, f"✅ Ответ отправлен пользователю {target_id}", token)
+                    except ValueError:
+                        send_message(OPERATOR_ID, "❌ Ошибка: ID пользователя должен быть числом. Пример: `123456789 Привет`", token)
+                else:
+                    send_message(OPERATOR_ID, "❌ Формат: `ID_пользователя текст`\nПример: `123456789 Привет`", token)
+            return  # не пересылаем сообщения оператора дальше
+
+        # Обычный пользователь
         if text == '/start':
             keyboard = {
                 'inline_keyboard': [[{'text': '📞 Связаться с оператором', 'callback_data': 'operator'}]]
@@ -57,6 +73,7 @@ def process_update(update, token, bot_num):
         elif text and text != '/start':
             send_message(chat_id, 'Сначала нажмите /start и кнопку.', token)
 
+    # Обработка нажатий кнопок
     elif 'callback_query' in update:
         query = update['callback_query']
         user_id = query['from']['id']
@@ -73,7 +90,7 @@ def process_update(update, token, bot_num):
             requests.post(edit_url, json=payload)
             send_message(OPERATOR_ID, f"🆕 Новый клиент @{query['from'].get('username', '')} (id:{user_id})", token)
 
-# ========== ВЕБХУКИ ДЛЯ ТРЁХ БОТОВ ==========
+# Вебхуки для трёх ботов
 @app.route('/webhook/1', methods=['POST'])
 def webhook1():
     process_update(request.get_json(), TOKEN1, 1)
@@ -89,7 +106,7 @@ def webhook3():
     process_update(request.get_json(), TOKEN3, 3)
     return 'OK', 200
 
-# ========== МАРШРУТ ДЛЯ ОТВЕТОВ ОПЕРАТОРА (если нужно) ==========
+# Альтернативный маршрут для ответов (POST /reply) – если нужно
 @app.route('/reply', methods=['POST'])
 def reply():
     data = request.get_json()
@@ -98,7 +115,6 @@ def reply():
     send_message(data['user_id'], f"👨‍💼 Оператор: {data['text']}", TOKEN1)
     return 'OK', 200
 
-# ========== ПРОВЕРКА ЗДОРОВЬЯ ДЛЯ RENDER ==========
 @app.route('/')
 def health():
     return 'OK', 200
