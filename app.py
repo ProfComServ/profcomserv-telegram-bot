@@ -5,14 +5,13 @@ import requests
 
 app = Flask(__name__)
 
-# Токены ботов из переменных окружения (или пропиши прямо, но лучше через окружение)
+# ========== ТОКЕНЫ ТРЁХ БОТОВ (из переменных окружения или явно) ==========
 TOKEN1 = os.environ.get('BOT_TOKEN_1', '8684012503:AAHcBc1ggVUGEHv7dY1M-YcGIuxviWwTLh0')
 TOKEN2 = os.environ.get('BOT_TOKEN_2', '8223022364:AAEu31BylYStpxHxg06yyW_JY2NX32WgEPo')
 TOKEN3 = os.environ.get('BOT_TOKEN_3', '8764025967:AAFS_kgxV6y9Zcg3THrrG-JNb6nErL3KrA4')
 OPERATOR_ID = int(os.environ.get('OPERATOR_ID', 7137220733))
 
-# Хранилище активных диалогов (user_id -> True)
-active_chats = {}
+active_chats = {}  # user_id -> True
 
 def send_message(chat_id, text, token, reply_markup=None):
     url = f"https://api.telegram.org/bot{token}/sendMessage"
@@ -22,19 +21,18 @@ def send_message(chat_id, text, token, reply_markup=None):
     try:
         r = requests.post(url, json=payload, timeout=5)
         if not r.ok:
-            print(f"Ошибка отправки {chat_id}: {r.status_code} {r.text}")
+            print(f"Ошибка отправки: {r.status_code} {r.text}")
     except Exception as e:
-        print(f"Ошибка: {e}")
+        print(e)
 
 def process_update(update, token, bot_num):
-    # ========== ГЛАВНОЕ ИСПРАВЛЕНИЕ: Пропускаем сообщения от ботов ==========
+    # ========== КЛЮЧЕВАЯ ПРОВЕРКА: игнорируем сообщения от ботов ==========
     if update.get('message', {}).get('from', {}).get('is_bot', False):
-        print(f"Bot {bot_num}: игнорирую сообщение от самого себя или другого бота")
+        print(f"Bot {bot_num}: игнорирую сообщение от бота")
         return
-    # ======================================================================
+    # ================================================================
 
     if not update:
-        print(f"Bot {bot_num}: пустой update")
         return
 
     print(f"Bot {bot_num} получил: {json.dumps(update)[:200]}")
@@ -47,29 +45,22 @@ def process_update(update, token, bot_num):
 
         if text == '/start':
             keyboard = {
-                'inline_keyboard': [
-                    [{'text': '📞 Связаться с оператором', 'callback_data': 'operator'}]
-                ]
+                'inline_keyboard': [[{'text': '📞 Связаться с оператором', 'callback_data': 'operator'}]]
             }
-            send_message(chat_id,
-                         'Привет! Я бот ProfComServ.\nНажми кнопку, чтобы связаться с оператором.',
-                         token, keyboard)
+            send_message(chat_id, 'Привет! Нажми кнопку, чтобы связаться с оператором.', token, keyboard)
         elif chat_id in active_chats:
-            # Пересылаем сообщение оператору
             send_message(OPERATOR_ID, f"📩 От @{user} (id:{chat_id}): {text}", token)
             send_message(chat_id, '✉️ Сообщение отправлено оператору. Ожидайте ответа.', token)
         elif text and text != '/start':
-            send_message(chat_id, 'Сначала нажмите /start и кнопку «Связаться с оператором».', token)
+            send_message(chat_id, 'Сначала нажмите /start и кнопку.', token)
 
     elif 'callback_query' in update:
         query = update['callback_query']
         user_id = query['from']['id']
         if query['data'] == 'operator':
             active_chats[user_id] = True
-            # Ответ на callback, чтобы убрать часики
             requests.post(f"https://api.telegram.org/bot{token}/answerCallbackQuery",
                           json={'callback_query_id': query['id']})
-            # Меняем текст сообщения
             edit_url = f"https://api.telegram.org/bot{token}/editMessageText"
             payload = {
                 'chat_id': query['message']['chat']['id'],
@@ -77,11 +68,9 @@ def process_update(update, token, bot_num):
                 'text': '✅ Вы переведены на оператора. Напишите сообщение.'
             }
             requests.post(edit_url, json=payload)
-            send_message(OPERATOR_ID,
-                         f"🆕 Новый клиент @{query['from'].get('username', '')} (id:{user_id})",
-                         token)
+            send_message(OPERATOR_ID, f"🆕 Новый клиент @{query['from'].get('username', '')} (id:{user_id})", token)
 
-# Маршруты для каждого бота
+# Маршруты для трёх ботов
 @app.route('/webhook/1', methods=['POST'])
 def webhook1():
     process_update(request.get_json(), TOKEN1, 1)
@@ -97,17 +86,16 @@ def webhook3():
     process_update(request.get_json(), TOKEN3, 3)
     return 'OK', 200
 
-# Маршрут для ответов оператора (POST-запрос с JSON)
+# Маршрут для ответов оператора
 @app.route('/reply', methods=['POST'])
 def reply():
     data = request.get_json()
     if not data or 'user_id' not in data or 'text' not in data:
         return 'Bad request', 400
-    for token in [TOKEN1, TOKEN2, TOKEN3]:
-        send_message(data['user_id'], f"👨‍💼 Оператор: {data['text']}", token)
+    # Отправляем ответ через любой токен (например, первый)
+    send_message(data['user_id'], f"👨‍💼 Оператор: {data['text']}", TOKEN1)
     return 'OK', 200
 
-# Проверка здоровья для Render
 @app.route('/')
 def health():
     return 'OK', 200
