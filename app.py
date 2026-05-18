@@ -5,7 +5,7 @@ import requests
 
 app = Flask(__name__)
 
-# ========== ТОКЕНЫ ТРЁХ БОТОВ (из переменных окружения или явно) ==========
+# ========== ТОКЕНЫ ТРЁХ БОТОВ (можно через переменные окружения) ==========
 TOKEN1 = os.environ.get('BOT_TOKEN_1', '8684012503:AAHcBc1ggVUGEHv7dY1M-YcGIuxviWwTLh0')
 TOKEN2 = os.environ.get('BOT_TOKEN_2', '8223022364:AAEu31BylYStpxHxg06yyW_JY2NX32WgEPo')
 TOKEN3 = os.environ.get('BOT_TOKEN_3', '8764025967:AAFS_kgxV6y9Zcg3THrrG-JNb6nErL3KrA4')
@@ -19,18 +19,15 @@ def send_message(chat_id, text, token, reply_markup=None):
     if reply_markup:
         payload['reply_markup'] = json.dumps(reply_markup)
     try:
-        r = requests.post(url, json=payload, timeout=5)
-        if not r.ok:
-            print(f"Ошибка отправки: {r.status_code} {r.text}")
+        requests.post(url, json=payload, timeout=5)
     except Exception as e:
         print(e)
 
 def process_update(update, token, bot_num):
-    # ========== КЛЮЧЕВАЯ ПРОВЕРКА: игнорируем сообщения от ботов ==========
+    # 1. Игнорируем сообщения от ботов (чтобы не зацикливаться)
     if update.get('message', {}).get('from', {}).get('is_bot', False):
         print(f"Bot {bot_num}: игнорирую сообщение от бота")
         return
-    # ================================================================
 
     if not update:
         return
@@ -40,6 +37,12 @@ def process_update(update, token, bot_num):
     if 'message' in update:
         msg = update['message']
         chat_id = msg['chat']['id']
+
+        # 2. Игнорируем сообщения от самого оператора (чтобы не было эха)
+        if chat_id == OPERATOR_ID:
+            print(f"Bot {bot_num}: игнорирую сообщение от оператора")
+            return
+
         user = msg['chat'].get('username', '')
         text = msg.get('text')
 
@@ -70,7 +73,7 @@ def process_update(update, token, bot_num):
             requests.post(edit_url, json=payload)
             send_message(OPERATOR_ID, f"🆕 Новый клиент @{query['from'].get('username', '')} (id:{user_id})", token)
 
-# Маршруты для трёх ботов
+# ========== ВЕБХУКИ ДЛЯ ТРЁХ БОТОВ ==========
 @app.route('/webhook/1', methods=['POST'])
 def webhook1():
     process_update(request.get_json(), TOKEN1, 1)
@@ -86,16 +89,16 @@ def webhook3():
     process_update(request.get_json(), TOKEN3, 3)
     return 'OK', 200
 
-# Маршрут для ответов оператора
+# ========== МАРШРУТ ДЛЯ ОТВЕТОВ ОПЕРАТОРА (если нужно) ==========
 @app.route('/reply', methods=['POST'])
 def reply():
     data = request.get_json()
     if not data or 'user_id' not in data or 'text' not in data:
         return 'Bad request', 400
-    # Отправляем ответ через любой токен (например, первый)
     send_message(data['user_id'], f"👨‍💼 Оператор: {data['text']}", TOKEN1)
     return 'OK', 200
 
+# ========== ПРОВЕРКА ЗДОРОВЬЯ ДЛЯ RENDER ==========
 @app.route('/')
 def health():
     return 'OK', 200
